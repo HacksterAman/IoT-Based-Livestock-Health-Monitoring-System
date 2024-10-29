@@ -1,67 +1,68 @@
+#include <Arduino.h>
 #include <Wire.h>
-#include "MAX30105.h"
-#include "spo2_algorithm.h"
+#include "MAX30100_PulseOximeter.h"
 
-MAX30105 particleSensor;
+#define REPORTING_PERIOD_MS 1000
 
-// Buffer size and data type update
-#define BUFFER_SIZE 100
-uint32_t irBuffer[BUFFER_SIZE];  // Use uint32_t for the IR buffer
-uint32_t redBuffer[BUFFER_SIZE]; // Use uint32_t for the red buffer
+// PulseOximeter is the higher level interface to the sensor
+// it offers:
+//  * beat detection reporting
+//  * heart rate calculation
+//  * SpO2 (oxidation level) calculation
+PulseOximeter pox;
 
-int32_t bufferLength;  // data length
-int32_t spo2;          // SPO2 value
-int8_t validSPO2;      // indicator to show if the SPO2 calculation is valid
-int32_t heartRate;     // heart rate value
-int8_t validHeartRate; // indicator to show if the heart rate calculation is valid
+uint32_t tsLastReport = 0;
+
+// Callback (registered below) fired when a pulse is detected
+void onBeatDetected()
+{
+  Serial.println("Beat!");
+}
 
 void setup()
 {
   Serial.begin(115200);
-  // Initialize sensor
-  if (!particleSensor.begin(Wire, I2C_SPEED_FAST))
+
+  Serial.print("Initializing pulse oximeter..");
+
+  // Initialize the PulseOximeter instance
+  // Failures are generally due to an improper I2C wiring, missing power supply
+  // or wrong target chip
+  if (!pox.begin())
   {
-    Serial.println("MAX30105 was not found. Please check wiring/power.");
-    while (1)
+    Serial.println("FAILED");
+    for (;;)
       ;
   }
+  else
+  {
+    Serial.println("SUCCESS");
+  }
 
-  particleSensor.setup();                    // Configure sensor with default settings
-  particleSensor.setPulseAmplitudeRed(0x0A); // Low Red LED amplitude
-  particleSensor.setPulseAmplitudeGreen(0);  // Turn off Green LED
-  particleSensor.enableDIETEMPRDY();         // Enable the temperature ready interrupt
+  // The default current for the IR LED is 50mA and it could be changed
+  //   by uncommenting the following line. Check MAX30100_Registers.h for all the
+  //   available options.
+  // pox.setIRLedCurrent(MAX30100_LED_CURR_7_6MA);
+
+  // Register a callback for the beat detection
+  pox.setOnBeatDetectedCallback(onBeatDetected);
 }
 
 void loop()
 {
-  // Collect samples
-  bufferLength = BUFFER_SIZE; // buffer length
+  // Make sure to call update as fast as possible
+  pox.update();
 
-  // Read the first 100 samples
-  for (byte i = 0; i < bufferLength; i++)
+  // Asynchronously dump heart rate and oxidation levels to the serial
+  // For both, a value of 0 means "invalid"
+  if (millis() - tsLastReport > REPORTING_PERIOD_MS)
   {
-    while (particleSensor.available() == false)
-    {
-      particleSensor.check(); // Check for new data
-    }
-    redBuffer[i] = particleSensor.getRed();
-    irBuffer[i] = particleSensor.getIR();
-    particleSensor.nextSample(); // Move to next sample
+    Serial.print("Heart rate:");
+    Serial.print(pox.getHeartRate());
+    Serial.print("bpm / SpO2:");
+    Serial.print(pox.getSpO2());
+    Serial.println("%");
+
+    tsLastReport = millis();
   }
-
-  // Calculate heart rate and SpO2
-  maxim_heart_rate_and_oxygen_saturation(irBuffer, bufferLength, redBuffer, &spo2, &validSPO2, &heartRate, &validHeartRate);
-
-  // Display results
-  Serial.print("Heart Rate: ");
-  Serial.print(heartRate);
-  Serial.print(" Valid HR: ");
-  Serial.println(validHeartRate);
-
-  Serial.print("SpO2: ");
-  Serial.print(spo2);
-  Serial.print(" Valid SpO2: ");
-  Serial.println(validSPO2);
-
-  delay(1000); // Delay for readability
 }
