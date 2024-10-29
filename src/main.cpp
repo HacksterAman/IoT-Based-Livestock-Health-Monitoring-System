@@ -1,32 +1,67 @@
-#include <Adafruit_GFX.h>
-#include <Adafruit_SH110X.h>
+#include <Wire.h>
+#include "MAX30105.h"
+#include "spo2_algorithm.h"
 
-// Define OLED display width and height
-#define SCREEN_WIDTH 128
-#define SCREEN_HEIGHT 64
+MAX30105 particleSensor;
 
-// Declare the display object with I2C address 0x3C
-Adafruit_SH1106G display = Adafruit_SH1106G(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+// Buffer size and data type update
+#define BUFFER_SIZE 100
+uint32_t irBuffer[BUFFER_SIZE];  // Use uint32_t for the IR buffer
+uint32_t redBuffer[BUFFER_SIZE]; // Use uint32_t for the red buffer
+
+int32_t bufferLength;  // data length
+int32_t spo2;          // SPO2 value
+int8_t validSPO2;      // indicator to show if the SPO2 calculation is valid
+int32_t heartRate;     // heart rate value
+int8_t validHeartRate; // indicator to show if the heart rate calculation is valid
 
 void setup()
 {
-  // Start the display
-  if (!display.begin(0x3C))
+  Serial.begin(115200);
+  // Initialize sensor
+  if (!particleSensor.begin(Wire, I2C_SPEED_FAST))
   {
-    Serial.println(F("SH110X OLED not found"));
+    Serial.println("MAX30105 was not found. Please check wiring/power.");
     while (1)
-      ; // Halt if display not found
+      ;
   }
 
-  display.clearDisplay();
-  display.setTextSize(1);             // Normal 1:1 pixel scale
-  display.setTextColor(SH110X_WHITE); // White text
-  display.setCursor(0, 0);            // Start at top-left corner
-  display.println(F("Hello, World!"));
-  display.display();
+  particleSensor.setup();                    // Configure sensor with default settings
+  particleSensor.setPulseAmplitudeRed(0x0A); // Low Red LED amplitude
+  particleSensor.setPulseAmplitudeGreen(0);  // Turn off Green LED
+  particleSensor.enableDIETEMPRDY();         // Enable the temperature ready interrupt
 }
 
 void loop()
 {
-  // Add more code here if you want to update the display
+  // Collect samples
+  bufferLength = BUFFER_SIZE; // buffer length
+
+  // Read the first 100 samples
+  for (byte i = 0; i < bufferLength; i++)
+  {
+    while (particleSensor.available() == false)
+    {
+      particleSensor.check(); // Check for new data
+    }
+    redBuffer[i] = particleSensor.getRed();
+    irBuffer[i] = particleSensor.getIR();
+    particleSensor.nextSample(); // Move to next sample
+  }
+
+  // Calculate heart rate and SpO2
+  maxim_heart_rate_and_oxygen_saturation(irBuffer, bufferLength, redBuffer, &spo2, &validSPO2, &heartRate, &validHeartRate);
+
+  // Display results
+  Serial.print("Heart Rate: ");
+  Serial.print(heartRate);
+  Serial.print(" Valid HR: ");
+  Serial.println(validHeartRate);
+
+  Serial.print("SpO2: ");
+  Serial.print(spo2);
+  Serial.print(" Valid SpO2: ");
+  Serial.println(validSPO2);
+
+  delay(1000); // Delay for readability
 }
