@@ -1,15 +1,22 @@
 #include <Arduino.h>
-#include <Wire.h>
+#include <WiFi.h>
+#include <PubSubClient.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SH110X.h>
 #include <DHT.h>
 #include "MAX30100_PulseOximeter.h"
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
-#include <PubSubClient.h>
-#include <WiFi.h>
 
-#define REPORTING_PERIOD_MS 1000
+#define LED_BUILTIN 2
+
+// Wi-Fi credentials
+const char *ssid = "A201";
+const char *password = "airtel201";
+
+// Thingsboard server hostname and device token
+const char *mqtt_server = "thingsboard.cloud";
+const char *access_token = "UjLYcubWy9JTmYixsJnV";
 
 // Define OLED display width and height
 #define SCREEN_WIDTH 128
@@ -24,14 +31,10 @@ PulseOximeter pox;
 // MPU6050 instance
 Adafruit_MPU6050 mpu;
 
-// MQTT client setup
-const char *mqtt_server = "thingsboard.cloud";
-const char *access_token = "UjLYcubWy9JTmYixsJnV"; // Your access token
-WiFiClient espClient;                              // Ensure you have included the WiFi library
-PubSubClient client(espClient);
-
 uint32_t previous = 0;
 float h, t;
+int heartRate, spo2;
+
 sensors_event_t a, g, temp;
 
 // DHT11 setup
@@ -39,36 +42,58 @@ sensors_event_t a, g, temp;
 #define DHTTYPE DHT11 // DHT 11
 DHT dht(DHTPIN, DHTTYPE);
 
-// Callback fired when a pulse is detected
-void onBeatDetected()
+WiFiClient espClient;
+PubSubClient client(espClient);
+
+// Wi-Fi setup function
+void setupWiFi()
 {
-  Serial.println("Beat!");
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    digitalWrite(LED_BUILTIN, LOW);
+    delay(500);
+  }
+  Serial.println("WiFi connected");
+  digitalWrite(LED_BUILTIN, HIGH);
 }
 
-// Function to connect to the MQTT server
+// MQTT reconnect function
 void reconnect()
 {
-  // Loop until we're reconnected
   while (!client.connected())
   {
+    digitalWrite(LED_BUILTIN, LOW);
     Serial.print("Attempting MQTT connection...");
-    // Attempt to connect
-    if (client.connect("ArduinoClient", access_token, NULL))
+    if (client.connect("ESP32Client", access_token, NULL))
     {
       Serial.println("connected");
+      digitalWrite(LED_BUILTIN, HIGH);
     }
     else
     {
       Serial.print("failed, rc=");
       Serial.print(client.state());
-      delay(2000);
+      Serial.println(" try again in 5 seconds");
+      delay(5000);
     }
   }
 }
 
+void core0Task(void *parameter);
+void core1Task(void *parameter);
+
 void setup()
 {
   Serial.begin(115200);
+  pinMode(LED_BUILTIN, OUTPUT);
+  display.begin(0x3C);
+
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SH110X_WHITE);
 
   // Initialize MPU6050
   Serial.println("Initializing MPU6050...");
@@ -79,9 +104,7 @@ void setup()
       ;
   }
   else
-  {
     Serial.println("MPU6050 Found!");
-  }
 
   mpu.setHighPassFilter(MPU6050_HIGHPASS_0_63_HZ);
   mpu.setMotionDetectionThreshold(1);
@@ -102,91 +125,129 @@ void setup()
     Serial.println("SUCCESS");
   }
 
-  pox.setOnBeatDetectedCallback(onBeatDetected);
-  display.begin(0x3C);
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setTextColor(SH110X_WHITE);
+  // Initialize DHT11 sensor
   dht.begin();
 
-  // Connect to WiFi (Ensure you have your WiFi credentials)
-  WiFi.begin("yourSSID", "yourPASSWORD");
-  while (WiFi.status() != WL_CONNECTED)
-  {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println("WiFi connected");
-
-  client.setServer(mqtt_server, 1883);
+  // Create tasks pinned to different cores
+  xTaskCreatePinnedToCore(core1Task, "Core0Task", 10000, NULL, 1, NULL, 0);
+  xTaskCreatePinnedToCore(core0Task, "Core1Task", 10000, NULL, 1, NULL, 1);
 }
 
 void loop()
 {
-  // Ensure MQTT connection
-  if (!client.connected())
-  {
-    reconnect();
-  }
-  client.loop();
+}
 
-  // Update pulse oximeter
-  pox.update();
-  int heartRate = pox.getHeartRate();
-  int spo2 = pox.getSpO2();
-
-  // Read DHT11 every 2 seconds
-  if (millis() - previous > 2000)
+void core0Task(void *parameter)
+{
+  setupWiFi();
+  client.setServer(mqtt_server, 1883);
+  for (;;)
   {
-    h = dht.readHumidity();
-    t = dht.readTemperature();
-    if (isnan(t) || isnan(h))
+    if (millis() - previous > 2000)
     {
-      Serial.println("Failed to read from DHT sensor!");
+      // Reading t or h takes about 250 milliseconds!
+      // Sensor readings may also be up to 2 seconds 'old' (its a very slow sensor)
+      h = dht.readHumidity();
+      // Read temperature as Celsius (the default)
+      t = dht.readTemperature();
+
+      // Check if any reads failed and exit early (to try again).
+      if (isnan(t) || isnan(h))
+      {
+        Serial.println("Failed to read from DHT sensor!");
+      }
+      previous = millis();
     }
-    previous = millis();
-  }
 
-  // Check for motion interrupt and get MPU6050 data
-  if (mpu.getMotionInterruptStatus())
+    if (!client.connected())
+    {
+      reconnect();
+    }
+    client.loop();
+
+    String payload = "{";
+    payload += "\"heartrate\":" + String(heartRate) + ",";
+    payload += "\"spo2\":" + String(spo2) + ",";
+    payload += "\"temperature\":" + String(t) + ",";
+    payload += "\"humidity\":" + String(h) + ",";
+    payload += "\"Ax\":" + String(a.acceleration.x) + ",";
+    payload += "\"Ay\":" + String(a.acceleration.y) + ",";
+    payload += "\"Az\":" + String(a.acceleration.z) + ",";
+    payload += "\"Gx\":" + String(g.gyro.x) + ",";
+    payload += "\"Gy\":" + String(g.gyro.y) + ",";
+    payload += "\"Gz\":" + String(g.gyro.z);
+    payload += "}";
+    client.publish("v1/devices/me/telemetry", payload.c_str());
+    delay(100);
+  }
+}
+
+void core1Task(void *parameter)
+{
+  for (;;)
   {
-    mpu.getEvent(&a, &g, &temp);
+    // Make sure to call update as fast as possible
+    pox.update();
+    heartRate = pox.getHeartRate();
+    spo2 = pox.getSpO2();
+
+    // Check for motion interrupt
+    if (mpu.getMotionInterruptStatus())
+    {
+
+      mpu.getEvent(&a, &g, &temp);
+
+      Serial.print("AccelX: ");
+      Serial.print(a.acceleration.x);
+      Serial.print(", AccelY: ");
+      Serial.print(a.acceleration.y);
+      Serial.print(", AccelZ: ");
+      Serial.print(a.acceleration.z);
+      Serial.print(", GyroX: ");
+      Serial.print(g.gyro.x);
+      Serial.print(", GyroY: ");
+      Serial.print(g.gyro.y);
+      Serial.print(", GyroZ: ");
+      Serial.println(g.gyro.z);
+    }
+
+    // Display data on OLED
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    display.print("Heart rate: ");
+    display.print(heartRate);
+    display.println(" bpm");
+    display.print("SpO2: ");
+    display.print(spo2);
+    display.println(" %");
+    display.print("Temp: ");
+    display.print(t);
+    display.println(" C");
+    display.print("Humidity: ");
+    display.print(h);
+    display.println(" %");
+    display.print("Ax:");
+    display.print(a.acceleration.x);
+    display.print(" | Gx:");
+    display.println(g.gyro.x);
+    display.print("Ay:");
+    display.print(a.acceleration.y);
+    display.print(" | Gy:");
+    display.println(g.gyro.y);
+    display.print("Az:");
+    display.print(a.acceleration.z);
+    display.print(" | Gz:");
+    display.println(g.gyro.z);
+    display.display();
+
+    Serial.print("Heart rate: ");
+    Serial.print(heartRate);
+    Serial.print(" bpm / SpO2: ");
+    Serial.print(spo2);
+    Serial.print(" % / Temp: ");
+    Serial.print(t);
+    Serial.print(" C / Humidity: ");
+    Serial.print(h);
+    Serial.println(" %");
   }
-
-  // Display data on OLED
-  display.clearDisplay();
-  display.setCursor(0, 0);
-  display.print("Heart rate: ");
-  display.print(heartRate);
-  display.println(" bpm");
-  display.print("SpO2: ");
-  display.print(spo2);
-  display.println(" %");
-  display.print("Temp: ");
-  display.print(t);
-  display.println(" C");
-  display.print("Humidity: ");
-  display.print(h);
-  display.println(" %");
-  display.display();
-
-  // Publish sensor data to ThingsBoard
-  String sensorData = "temperature=" + String(t) + "&humidity=" + String(h) +
-                      "&heartrate=" + String(heartRate) + "&spo2=" + String(spo2) +
-                      "&Gx=" + String(g.gyro.x) + "&Gy=" + String(g.gyro.y) +
-                      "&Gz=" + String(g.gyro.z) + "&Ax=" + String(a.acceleration.x) +
-                      "&Ay=" + String(a.acceleration.y) + "&Az=" + String(a.acceleration.z);
-
-  client.publish("v1/devices/me/telemetry", sensorData.c_str());
-
-  // Print to Serial
-  Serial.print("Heart rate: ");
-  Serial.print(heartRate);
-  Serial.print(" bpm / SpO2: ");
-  Serial.print(spo2);
-  Serial.print(" % / Temp: ");
-  Serial.print(t);
-  Serial.print(" C / Humidity: ");
-  Serial.print(h);
-  Serial.println(" %");
 }
