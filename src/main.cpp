@@ -11,8 +11,8 @@
 #define LED_BUILTIN 2
 
 // Wi-Fi credentials
-const char *ssid = "A201";
-const char *password = "airtel201";
+const char *ssid = "ID";
+const char *password = "PASSWORD";
 
 // Thingsboard server hostname and device token
 const char *mqtt_server = "thingsboard.cloud";
@@ -30,58 +30,22 @@ PulseOximeter pox;
 
 // MPU6050 instance
 Adafruit_MPU6050 mpu;
+sensors_event_t a, g, temp;
 
+// Global Variables
 uint32_t previous = 0;
 float h, t;
 int heartRate, spo2;
-
-sensors_event_t a, g, temp;
-
-// DHT11 setup
-#define DHTPIN 4      // Pin where the DHT11 is connected
-#define DHTTYPE DHT11 // DHT 11
-DHT dht(DHTPIN, DHTTYPE);
-
 WiFiClient espClient;
 PubSubClient client(espClient);
 
-// Wi-Fi setup function
-void setupWiFi()
-{
-  Serial.print("Connecting to ");
-  Serial.println(ssid);
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED)
-  {
-    digitalWrite(LED_BUILTIN, LOW);
-    delay(500);
-  }
-  Serial.println("WiFi connected");
-  digitalWrite(LED_BUILTIN, HIGH);
-}
+// DHT11 setup
+#define DHTPIN 4
+#define DHTTYPE DHT11
+DHT dht(DHTPIN, DHTTYPE);
 
-// MQTT reconnect function
-void reconnect()
-{
-  while (!client.connected())
-  {
-    digitalWrite(LED_BUILTIN, LOW);
-    Serial.print("Attempting MQTT connection...");
-    if (client.connect("ESP32Client", access_token, NULL))
-    {
-      Serial.println("connected");
-      digitalWrite(LED_BUILTIN, HIGH);
-    }
-    else
-    {
-      Serial.print("failed, rc=");
-      Serial.print(client.state());
-      Serial.println(" try again in 5 seconds");
-      delay(5000);
-    }
-  }
-}
-
+void setupWiFi();
+void reconnect();
 void core0Task(void *parameter);
 void core1Task(void *parameter);
 
@@ -89,23 +53,15 @@ void setup()
 {
   Serial.begin(115200);
   pinMode(LED_BUILTIN, OUTPUT);
-  display.begin(0x3C);
 
+  // Initialize SH1106G
+  display.begin(0x3C);
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(SH110X_WHITE);
 
   // Initialize MPU6050
-  Serial.println("Initializing MPU6050...");
-  if (!mpu.begin())
-  {
-    Serial.println("Failed to find MPU6050 chip");
-    for (;;)
-      ;
-  }
-  else
-    Serial.println("MPU6050 Found!");
-
+  mpu.begin();
   mpu.setHighPassFilter(MPU6050_HIGHPASS_0_63_HZ);
   mpu.setMotionDetectionThreshold(1);
   mpu.setMotionDetectionDuration(20);
@@ -113,29 +69,18 @@ void setup()
   mpu.setInterruptPinPolarity(true);
   mpu.setMotionInterrupt(true);
 
-  Serial.print("Initializing pulse oximeter..");
-  if (!pox.begin())
-  {
-    Serial.println("FAILED");
-    for (;;)
-      ;
-  }
-  else
-  {
-    Serial.println("SUCCESS");
-  }
-
-  // Initialize DHT11 sensor
+  // Initialize DHT11
   dht.begin();
+
+  // Initialize MAX30100
+  pox.begin();
 
   // Create tasks pinned to different cores
   xTaskCreatePinnedToCore(core1Task, "Core0Task", 10000, NULL, 1, NULL, 0);
   xTaskCreatePinnedToCore(core0Task, "Core1Task", 10000, NULL, 1, NULL, 1);
 }
 
-void loop()
-{
-}
+void loop();
 
 void core0Task(void *parameter)
 {
@@ -143,22 +88,6 @@ void core0Task(void *parameter)
   client.setServer(mqtt_server, 1883);
   for (;;)
   {
-    if (millis() - previous > 2000)
-    {
-      // Reading t or h takes about 250 milliseconds!
-      // Sensor readings may also be up to 2 seconds 'old' (its a very slow sensor)
-      h = dht.readHumidity();
-      // Read temperature as Celsius (the default)
-      t = dht.readTemperature();
-
-      // Check if any reads failed and exit early (to try again).
-      if (isnan(t) || isnan(h))
-      {
-        Serial.println("Failed to read from DHT sensor!");
-      }
-      previous = millis();
-    }
-
     if (!client.connected())
     {
       reconnect();
@@ -197,18 +126,34 @@ void core1Task(void *parameter)
 
       mpu.getEvent(&a, &g, &temp);
 
-      Serial.print("AccelX: ");
-      Serial.print(a.acceleration.x);
-      Serial.print(", AccelY: ");
-      Serial.print(a.acceleration.y);
-      Serial.print(", AccelZ: ");
-      Serial.print(a.acceleration.z);
-      Serial.print(", GyroX: ");
-      Serial.print(g.gyro.x);
-      Serial.print(", GyroY: ");
-      Serial.print(g.gyro.y);
-      Serial.print(", GyroZ: ");
-      Serial.println(g.gyro.z);
+      // Serial.print("AccelX: ");
+      // Serial.print(a.acceleration.x);
+      // Serial.print(", AccelY: ");
+      // Serial.print(a.acceleration.y);
+      // Serial.print(", AccelZ: ");
+      // Serial.print(a.acceleration.z);
+      // Serial.print(", GyroX: ");
+      // Serial.print(g.gyro.x);
+      // Serial.print(", GyroY: ");
+      // Serial.print(g.gyro.y);
+      // Serial.print(", GyroZ: ");
+      // Serial.println(g.gyro.z);
+    }
+
+    if (millis() - previous > 2000)
+    {
+      // Reading t or h takes about 250 milliseconds!
+      // Sensor readings may also be up to 2 seconds 'old' (its a very slow sensor)
+      h = dht.readHumidity();
+      // Read temperature as Celsius (the default)
+      t = dht.readTemperature();
+
+      // Check if any reads failed and exit early (to try again).
+      if (isnan(t) || isnan(h))
+      {
+        Serial.println("Failed to read from DHT sensor!");
+      }
+      previous = millis();
     }
 
     // Display data on OLED
@@ -240,14 +185,51 @@ void core1Task(void *parameter)
     display.println(g.gyro.z);
     display.display();
 
-    Serial.print("Heart rate: ");
-    Serial.print(heartRate);
-    Serial.print(" bpm / SpO2: ");
-    Serial.print(spo2);
-    Serial.print(" % / Temp: ");
-    Serial.print(t);
-    Serial.print(" C / Humidity: ");
-    Serial.print(h);
-    Serial.println(" %");
+    // Serial.print("Heart rate: ");
+    // Serial.print(heartRate);
+    // Serial.print(" bpm / SpO2: ");
+    // Serial.print(spo2);
+    // Serial.print(" % / Temp: ");
+    // Serial.print(t);
+    // Serial.print(" C / Humidity: ");
+    // Serial.print(h);
+    // Serial.println(" %");
+  }
+}
+
+// Wi-Fi setup function
+void setupWiFi()
+{
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    digitalWrite(LED_BUILTIN, LOW);
+    delay(500);
+  }
+  Serial.println("WiFi connected");
+  digitalWrite(LED_BUILTIN, HIGH);
+}
+
+// MQTT reconnect function
+void reconnect()
+{
+  while (!client.connected())
+  {
+    digitalWrite(LED_BUILTIN, LOW);
+    Serial.print("Attempting MQTT connection...");
+    if (client.connect("ESP32Client", access_token, NULL))
+    {
+      Serial.println("connected");
+      digitalWrite(LED_BUILTIN, HIGH);
+    }
+    else
+    {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" try again in 5 seconds");
+      delay(5000);
+    }
   }
 }
