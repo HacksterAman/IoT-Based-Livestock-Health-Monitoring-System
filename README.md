@@ -1,8 +1,6 @@
 # IoT-Based Cow Monitoring System
 
-<p align="center">
-  <img src="Diagram.png" alt="System Workflow">
-</p>
+![System Workflow](Diagram.png)
 
 ## Table of Contents
 
