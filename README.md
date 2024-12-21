@@ -1,5 +1,9 @@
 # IoT-Based Cow Monitoring System
 
+<p align="center">
+  <img src="Diagram.png" alt="System Workflow">
+</p>
+
 ## Table of Contents
 
 - [Introduction](#introduction)
@@ -99,7 +103,7 @@ Key functions:
 
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## References
 
