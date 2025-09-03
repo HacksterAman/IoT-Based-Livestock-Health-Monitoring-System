@@ -1,4 +1,4 @@
-# IoT-Based Cow Monitoring System
+# IoT-Based Livestock Monitoring System
 
 ![System Workflow](Diagram.png)
 
@@ -18,11 +18,11 @@
 
 ## Introduction
 
-The IoT-Based Cow Monitoring System is an embedded system project designed to monitor vital health and activity parameters of cows. It provides real-time data such as heart rate, SpO2 levels, temperature, humidity, and motion metrics to ensure the well-being of livestock. The system is powered by an ESP32 microcontroller and employs various sensors to gather and transmit data to a ThingsBoard server for visualization and analysis.
+The IoT-Based Livestock Monitoring System is an embedded system project designed to monitor vital health and activity parameters of cows. It provides real-time data such as heart rate, SpO2 levels, temperature, humidity, and motion metrics to ensure the well-being of livestock. The system is powered by an ESP32 microcontroller and employs various sensors to gather and transmit data to a ThingsBoard server for visualization and analysis.
 
 ## Features
 
-- Real-time monitoring of cow health parameters.
+- Real-time monitoring of cattle health parameters.
 - Displays data on an OLED screen for on-site visualization.
 - Sends telemetry data to the ThingsBoard IoT platform for remote monitoring.
 - Implements multi-core processing on the ESP32 for efficiency.
